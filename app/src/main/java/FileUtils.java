@@ -9,6 +9,7 @@ import android.net.Uri;
 import android.provider.MediaStore;
 import android.util.Log;
 import java.io.File;
+import java.util.List;
 
 public class FileUtils {
 
@@ -54,6 +55,44 @@ public class FileUtils {
         return false;
     }
 
-    // The old, complex, and failing methods have been removed and replaced by the single, robust method above.
-}
+    /**
+     * NEW: Batch deletion method for Enhancement 4.
+     * Deletes a list of files efficiently by batching the database operation.
+     *
+     * @param context The application context.
+     * @param files   The list of files to be deleted.
+     * @return The number of files successfully deleted.
+     */
+    public static int deleteFileBatch(Context context, List<File> files) {
+        if (files == null || files.isEmpty()) return 0;
 
+        int deletedCount = 0;
+        ContentResolver resolver = context.getContentResolver();
+        
+        // 1. Prepare bulk SQL query: WHERE _data IN (?, ?, ?, ...)
+        StringBuilder where = new StringBuilder(MediaStore.Files.FileColumns.DATA + " IN (");
+        String[] selectionArgs = new String[files.size()];
+        
+        for (int i = 0; i < files.size(); i++) {
+            where.append("?");
+            if (i < files.size() - 1) where.append(",");
+            selectionArgs[i] = files.get(i).getAbsolutePath();
+        }
+        where.append(")");
+
+        // 2. Execute bulk delete on MediaStore
+        try {
+            resolver.delete(MediaStore.Files.getContentUri("external"), where.toString(), selectionArgs);
+        } catch (Exception e) {
+            Log.e(TAG, "Bulk MediaStore delete failed", e);
+        }
+
+        // 3. Physically delete the files from storage
+        for (File file : files) {
+            if (file.exists() && file.delete()) {
+                deletedCount++;
+            }
+        }
+        return deletedCount;
+    }
+}
