@@ -83,7 +83,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     private SearchAdapter adapter;
     private GridLayoutManager gridLayoutManager;
     
-    // CHANGED: Separate master list (all data) from display list (what user sees)
     private List<Object> masterList = new ArrayList<>();
     private List<Object> displayList = new ArrayList<>();
     
@@ -116,33 +115,19 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     public static class DateHeader {
         private final String dateString;
         private boolean isChecked;
-        private boolean isExpanded; // NEW: Track expansion state
+        private boolean isExpanded;
 
         public DateHeader(String dateString) {
             this.dateString = dateString;
             this.isChecked = false;
-            this.isExpanded = true; // Default to expanded
+            this.isExpanded = true;
         }
 
-        public String getDateString() {
-            return dateString;
-        }
-
-        public boolean isChecked() {
-            return isChecked;
-        }
-
-        public void setChecked(boolean checked) {
-            isChecked = checked;
-        }
-        
-        public boolean isExpanded() {
-            return isExpanded;
-        }
-
-        public void setExpanded(boolean expanded) {
-            isExpanded = expanded;
-        }
+        public String getDateString() { return dateString; }
+        public boolean isChecked() { return isChecked; }
+        public void setChecked(boolean checked) { isChecked = checked; }
+        public boolean isExpanded() { return isExpanded; }
+        public void setExpanded(boolean expanded) { isExpanded = expanded; }
     }
 
     @Override
@@ -243,7 +228,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 			});
 
         searchResultsGrid.setLayoutManager(gridLayoutManager);
-        // CHANGED: Pass 'this' as OnHeaderClickListener as well
         adapter = new SearchAdapter(this, displayList, this, this, this);
         searchResultsGrid.setAdapter(adapter);
     }
@@ -289,7 +273,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 				public void run() {
 					masterList.clear();
 					masterList.addAll(groupedList);
-                    // Initially show everything (all headers expanded by default)
                     rebuildDisplayList();
 					if (results.isEmpty()) {
 						Toast.makeText(SearchActivity.this, "No files found.", Toast.LENGTH_SHORT).show();
@@ -298,7 +281,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 			});
     }
     
-    // NEW: Logic to rebuild the display list based on expanded/collapsed headers
     private void rebuildDisplayList() {
         displayList.clear();
         boolean isCurrentGroupExpanded = true;
@@ -309,7 +291,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                 displayList.add(header);
                 isCurrentGroupExpanded = header.isExpanded();
             } else {
-                // If it's a file item, only add it if the current group is expanded
                 if (isCurrentGroupExpanded) {
                     displayList.add(item);
                 }
@@ -425,8 +406,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         File externalStorage = Environment.getExternalStorageDirectory();
 
         List<File> rootsToScan = new ArrayList<>();
-        
-        // --- ADDED: Standard Primary Storage paths ---
         rootsToScan.add(new File(externalStorage, "WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Android/media/com.whatsapp/WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Download"));
@@ -435,8 +414,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         rootsToScan.add(new File(externalStorage, "Pictures"));
         rootsToScan.add(new File(externalStorage, "DCIM/Camera"));
         
-        // --- NEW: CLONED APP SUPPORT (Dual Messenger / Parallel Space) ---
-        // Scan for user 999 (common for dual apps)
         File dualAppStorage = new File("/storage/emulated/999");
         if (dualAppStorage.exists() && dualAppStorage.canRead()) {
              rootsToScan.add(new File(dualAppStorage, "WhatsApp"));
@@ -445,7 +422,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
              rootsToScan.add(new File(dualAppStorage, "Download"));
         }
         
-        // Scan for user 10 (sometimes used)
         File parallelAppStorage = new File("/storage/emulated/10");
         if (parallelAppStorage.exists() && parallelAppStorage.canRead()) {
              rootsToScan.add(new File(parallelAppStorage, "WhatsApp"));
@@ -473,7 +449,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
         for (File file : files) {
             if (file.isDirectory()) {
-                // If specific folder searched, only go deeper if it matches
                 if (params.folderPath == null || file.getAbsolutePath().toLowerCase().contains(params.folderPath.toLowerCase())) {
                     scanDirectory(file, params, results);
                 }
@@ -781,7 +756,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
     private void initiateDeletionProcess() {
         final List<SearchResult> selectedResults = new ArrayList<>();
-        // CHANGED: Use masterList here to ensure we delete hidden items if they were selected previously
         for (Object item : masterList) {
             if (item instanceof SearchResult) {
                 SearchResult result = (SearchResult) item;
@@ -844,13 +818,33 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 			.setPositiveButton("Delete All", new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface dialog, int which) {
-					performDelete(toDelete);
+					// UPDATED: Enhancement 4 - Batch Deletion selection
+                    final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
+                    final int[] batchValues = {1, 5, 10, 20, 30};
+
+                    new AlertDialog.Builder(SearchActivity.this)
+                        .setTitle("Select Deletion Speed")
+                        .setItems(batchOptions, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialogInterface, int index) {
+                                performDelete(toDelete, batchValues[index]);
+                            }
+                        }).show();
 				}
 			})
             .setNeutralButton("Move to Recycle", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
-                    moveToRecycleBin(toDelete);
+                    // UPDATED: Enhancement 2 - Phone or SD Card selection
+                    AlertDialog.Builder binBuilder = new AlertDialog.Builder(SearchActivity.this);
+                    binBuilder.setTitle("Choose Recycle Bin");
+                    binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int whichBin) {
+                            moveToRecycleBin(toDelete, whichBin == 1);
+                        }
+                    });
+                    binBuilder.show();
                 }
             })
             .setNegativeButton("Hide Files", new DialogInterface.OnClickListener() {
@@ -881,8 +875,8 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     }
 
 
-    private void moveToRecycleBin(List<SearchResult> resultsToMove) {
-        new MoveToRecycleTask(resultsToMove).execute();
+    private void moveToRecycleBin(List<SearchResult> resultsToMove, boolean useSdCardBin) {
+        new MoveToRecycleTask(resultsToMove, useSdCardBin).execute();
     }
 
     private List<SearchResult> findSiblingFiles(SearchResult originalResult) {
@@ -902,7 +896,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             File parentDir = originalFile.getParentFile();
 
             if (parentDir != null && parentDir.isDirectory()) {
-                // Use master list for sibling check
                 for (Object item : masterList) {
                     if (item instanceof SearchResult) {
                         SearchResult potentialSibling = (SearchResult) item;
@@ -922,7 +915,7 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     }
 
 
-    private void performDelete(final List<SearchResult> toDelete) {
+    private void performDelete(final List<SearchResult> toDelete, int batchSize) {
         ArrayList<String> filePathsToDelete = new ArrayList<>();
         for (SearchResult result : toDelete) {
             if (result.getPath() != null) {
@@ -941,13 +934,14 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
         Intent intent = new Intent(this, DeleteService.class);
         intent.putStringArrayListExtra(DeleteService.EXTRA_FILES_TO_DELETE, filePathsToDelete);
+        intent.putExtra("batch_size", batchSize);
         ContextCompat.startForegroundService(this, intent);
     }
 
     private void promptForSdCardPermission() {
         new AlertDialog.Builder(this)
             .setTitle("SD Card Permission Needed")
-            .setMessage("To delete files on your external SD card, you must grant this app access. Please tap 'Grant', then select the root of your SD card (e.g., 'Galaxy SD Card') on the next screen and tap 'Allow'.")
+            .setMessage("To delete files on your external SD card, you must grant this app access. Please tap 'Grant', then select the root of your SD card and tap 'Allow'.")
             .setPositiveButton("Grant", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
@@ -1000,7 +994,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 					else if (itemId == R.id.filter_archives) currentFilterType = "archives";
 					else if (itemId == R.id.filter_other) currentFilterType = "other";
 					
-                    // Clear both lists and refresh data
                     masterList.clear();
                     displayList.clear();
                     adapter.updateData(displayList);
@@ -1016,7 +1009,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     public void onItemClick(SearchResult item) {
         item.setExcluded(!item.isExcluded());
         updateHeaderStateForItem(item);
-        // Find index in displayList to notify adapter
         int index = displayList.indexOf(item);
         if(index != -1) {
             adapter.notifyItemChanged(index);
@@ -1052,11 +1044,9 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     public void onHeaderCheckedChanged(DateHeader header, boolean isChecked) {
         header.setChecked(isChecked);
         
-        // Find the index of this header in the MASTER list to update subsequent items
         int masterIndex = masterList.indexOf(header);
         if (masterIndex == -1) return;
 
-        // Update selection state for all items under this header in master list
         for (int i = masterIndex + 1; i < masterList.size(); i++) {
             Object currentItem = masterList.get(i);
             if (currentItem instanceof SearchResult) {
@@ -1066,21 +1056,16 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             }
         }
         
-        // Refresh display list to show changes
         adapter.notifyDataSetChanged();
     }
     
-    // NEW: Handle minimizing/expanding headers
     @Override
     public void onHeaderClick(DateHeader header) {
-        // Toggle state
         header.setExpanded(!header.isExpanded());
-        // Rebuild the visible list based on new expansion states
         rebuildDisplayList();
     }
 
     private void updateHeaderStateForItem(SearchResult item) {
-        // We must check the MASTER list logic here
         int itemIndex = masterList.indexOf(item);
         if (itemIndex == -1) return;
 
@@ -1108,163 +1093,17 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         }
         parentHeader.setChecked(allIncluded);
         
-        // Notify adapter if header is visible
         int displayIndex = displayList.indexOf(parentHeader);
         if (displayIndex != -1) {
             adapter.notifyItemChanged(displayIndex);
         }
     }
 
-    public static class SearchResult {
-        private final Uri uri;
-        private final long mediaStoreId;
-        private final long lastModifiedForGrouping;
-        private final String displayName;
-        private final String path;
-        private boolean isExcluded;
-
-        public SearchResult(Uri uri, long mediaStoreId, long lastModifiedMillis, String displayName, String path) {
-            this.uri = uri;
-            this.mediaStoreId = mediaStoreId;
-            this.lastModifiedForGrouping = lastModifiedMillis;
-            this.displayName = displayName;
-            this.path = path;
-            this.isExcluded = true;
-        }
-        public Uri getUri() { return uri; }
-        public long getLastModified() { return mediaStoreId; }
-        public long getLastModifiedForGrouping() { return lastModifiedForGrouping; }
-        public String getDisplayName() { return displayName; }
-        public String getPath() { return path; }
-        public boolean isExcluded() { return isExcluded; }
-        public void setExcluded(boolean excluded) { isExcluded = excluded; }
-    }
-
-    private static class QueryParameters {
-        String folderPath;
-        long startTimeSeconds = -1;
-        long endTimeSeconds = -1;
-        void setDateRange(long start, long end) { this.startTimeSeconds = start; this.endTimeSeconds = end; }
-    }
-
-    private class PinchZoomListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
-        @Override
-        public boolean onScale(ScaleGestureDetector detector) {
-            float scaleFactor = detector.getScaleFactor();
-            int previousSpanCount = currentSpanCount;
-            if (scaleFactor > 1.05f) currentSpanCount = Math.max(MIN_SPAN_COUNT, currentSpanCount - 1);
-            else if (scaleFactor < 0.95f) currentSpanCount = Math.min(MAX_SPAN_COUNT, currentSpanCount + 1);
-
-            if (previousSpanCount != currentSpanCount) {
-                gridLayoutManager.setSpanCount(currentSpanCount);
-                adapter.notifyDataSetChanged();
-            }
-            return true;
-        }
-    }
-
-    private int getFileCategory(String fileName) {
-        String extension = "";
-        int i = fileName.lastIndexOf('.');
-        if (i > 0) {
-            extension = fileName.substring(i + 1).toLowerCase(Locale.ROOT);
-        }
-
-        List<String> imageExtensions = Arrays.asList("jpg", "jpeg", "png", "gif", "bmp", "webp");
-        List<String> videoExtensions = Arrays.asList("mp4", "3gp", "mkv", "webm", "avi");
-        List<String> audioExtensions = Arrays.asList("mp3", "wav", "ogg", "m4a", "aac", "flac");
-        List<String> docExtensions = Arrays.asList("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv", "json", "xml", "html", "js", "css", "java", "kt", "py", "c", "cpp", "h", "cs", "php", "rb", "go", "swift", "sh", "bat", "ps1", "ini", "cfg", "conf", "md", "prop", "gradle", "pro", "sql");
-
-        if (imageExtensions.contains(extension)) return CATEGORY_IMAGES;
-        if (videoExtensions.contains(extension)) return CATEGORY_VIDEOS;
-        if (audioExtensions.contains(extension)) return CATEGORY_AUDIO;
-        if (docExtensions.contains(extension)) return CATEGORY_DOCS;
-        return CATEGORY_OTHER;
-    }
-
-    private void openFileViewer(final SearchResult item) {
-        new AsyncTask<Void, Void, Intent>() {
-            @Override
-            protected Intent doInBackground(Void... voids) {
-                File file = new File(item.getPath());
-                String path = file.getAbsolutePath();
-                String name = file.getName();
-                int category = getFileCategory(name);
-                Intent intent = null;
-
-                if (category == CATEGORY_IMAGES || category == CATEGORY_VIDEOS || category == CATEGORY_AUDIO) {
-                    ArrayList<String> fileList = getSiblingFilesForViewer(file, category);
-                    int currentIndex = fileList.indexOf(path);
-                    if (currentIndex == -1) {
-						return null;
-                    }
-
-                    if (category == CATEGORY_IMAGES) {
-                        intent = new Intent(SearchActivity.this, ImageViewerActivity.class);
-                        intent.putStringArrayListExtra(ImageViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(ImageViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    } else if (category == CATEGORY_VIDEOS) {
-                        intent = new Intent(SearchActivity.this, VideoViewerActivity.class);
-                        intent.putStringArrayListExtra(VideoViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(VideoViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    } else if (category == CATEGORY_AUDIO) {
-                        intent = new Intent(SearchActivity.this, AudioPlayerActivity.class);
-                        intent.putStringArrayListExtra(AudioPlayerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(AudioPlayerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    }
-                } else {
-                    if (name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-                        intent = new Intent(SearchActivity.this, PdfViewerActivity.class);
-                    } else {
-                        intent = new Intent(SearchActivity.this, TextViewerActivity.class);
-                    }
-                    intent.putExtra(TextViewerActivity.EXTRA_FILE_PATH, path);
-                }
-                return intent;
-            }
-
-            @Override
-            protected void onPostExecute(Intent intent) {
-                if (intent != null) {
-                    startActivity(intent);
-                } else {
-                    Toast.makeText(SearchActivity.this, "Error opening file.", Toast.LENGTH_SHORT).show();
-                }
-            }
-        }.execute();
-    }
-
-    private ArrayList<String> getSiblingFilesForViewer(File currentFile, final int category) {
-        ArrayList<String> siblingFiles = new ArrayList<>();
-        File parentDir = currentFile.getParentFile();
-        if (parentDir == null || !parentDir.isDirectory()) {
-            siblingFiles.add(currentFile.getAbsolutePath());
-            return siblingFiles;
-        }
-
-        // Use masterList here to ensure we navigate through all available files
-        for (Object item : masterList) {
-            if (item instanceof SearchResult) {
-                SearchResult result = (SearchResult) item;
-                if (result.getPath() != null) {
-                    File file = new File(result.getPath());
-                    if (file.getParentFile() != null && file.getParentFile().equals(parentDir)) {
-                        if (getFileCategory(file.getName()) == category) {
-                            siblingFiles.add(file.getAbsolutePath());
-                        }
-                    }
-                }
-            }
-        }
-
-        Collections.sort(siblingFiles);
-        return siblingFiles;
-    }
-
     private void setupBroadcastReceivers() {
         deleteCompletionReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                // FIXED: Use correct extra key for count
                 int deletedCount = intent.getIntExtra(DeleteService.EXTRA_DELETED_COUNT, 0);
                 Toast.makeText(SearchActivity.this, "Deletion complete. " + deletedCount + " files removed.", Toast.LENGTH_LONG).show();
 
@@ -1299,7 +1138,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
     private void showFileOperationsDialog() {
         final List<SearchResult> selectedResults = new ArrayList<>();
-        // Use masterList to ensure selections in collapsed sections are counted
         for (Object item : masterList) {
             if (item instanceof SearchResult) {
                 SearchResult result = (SearchResult) item;
@@ -1386,8 +1224,16 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         recycleButton.setOnClickListener(new View.OnClickListener() {
 				@Override
 				public void onClick(View v) {
-					moveToRecycleBin(selectedResults);
-					dialog.dismiss();
+                    AlertDialog.Builder binBuilder = new AlertDialog.Builder(SearchActivity.this);
+                    binBuilder.setTitle("Choose Recycle Bin");
+                    binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int whichBin) {
+                            moveToRecycleBin(selectedResults, whichBin == 1);
+                        }
+                    });
+                    binBuilder.show();
+                    dialog.dismiss();
 				}
 			});
 
@@ -1468,17 +1314,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
         dialog.show();
     }
-
-    private File getFileFromResult(SearchResult result) {
-        if ("file".equals(result.getUri().getScheme())) {
-            return new File(result.getUri().getPath());
-        }
-        String path = result.getPath();
-        if (path != null) {
-            return new File(path);
-        }
-        return null;
-    }
     
     private void showSendToDropDialog(final File fileToSend) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
@@ -1548,10 +1383,12 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         private AlertDialog progressDialog;
         private List<SearchResult> resultsToMove;
         private Context context;
+        private boolean useSdCardBin;
 
-        public MoveToRecycleTask(List<SearchResult> resultsToMove) {
+        public MoveToRecycleTask(List<SearchResult> resultsToMove, boolean useSdCardBin) {
             this.resultsToMove = resultsToMove;
             this.context = SearchActivity.this;
+            this.useSdCardBin = useSdCardBin;
         }
 
         @Override
@@ -1567,10 +1404,8 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         @Override
         protected List<SearchResult> doInBackground(Void... voids) {
             File recycleBinDir = new File(Environment.getExternalStorageDirectory(), "HFMRecycleBin");
-            if (!recycleBinDir.exists()) {
-                if (!recycleBinDir.mkdir()) {
-                    return new ArrayList<>();
-                }
+            if (!recycleBinDir.exists() && !useSdCardBin) {
+                if (!recycleBinDir.mkdir()) return new ArrayList<>();
             }
 
             List<SearchResult> movedResults = new ArrayList<>();
@@ -1579,45 +1414,41 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 
                 File sourceFile = new File(result.getPath());
                 if (sourceFile.exists()) {
-                    File destFile = new File(recycleBinDir, sourceFile.getName());
-
-                    if (destFile.exists()) {
-                        String name = sourceFile.getName();
-                        String extension = "";
-                        int dotIndex = name.lastIndexOf(".");
-                        if (dotIndex > 0) {
-                            extension = name.substring(dotIndex);
-                            name = name.substring(0, dotIndex);
-                        }
-                        destFile = new File(recycleBinDir, name + "_" + System.currentTimeMillis() + extension);
-                    }
-
                     boolean moveSuccess = false;
-
-                    if (sourceFile.renameTo(destFile)) {
-                        moveSuccess = true;
+                    
+                    if (useSdCardBin && StorageUtils.isFileOnSdCard(context, sourceFile)) {
+                         if (StorageUtils.moveFileOnSdCardSafely(context, sourceFile)) {
+                             moveSuccess = true;
+                         }
                     } else {
-                        Log.w(TAG, "renameTo failed for " + sourceFile.getAbsolutePath() + ". Falling back to copy-delete.");
-                        if (copyFile(sourceFile, destFile)) {
-                            if (StorageUtils.deleteFile(context, sourceFile)) {
-                                moveSuccess = true;
-                            } else {
-                                Log.e(TAG, "Failed to delete original file " + sourceFile.getAbsolutePath() + " after copy. Deleting copied file to prevent duplication.");
-                                destFile.delete();
-                                moveSuccess = false;
+                        File destFile = new File(recycleBinDir, sourceFile.getName());
+                        if (destFile.exists()) {
+                            String name = sourceFile.getName();
+                            String extension = "";
+                            int dotIndex = name.lastIndexOf(".");
+                            if (dotIndex > 0) {
+                                extension = name.substring(dotIndex);
+                                name = name.substring(0, dotIndex);
                             }
+                            destFile = new File(recycleBinDir, name + "_" + System.currentTimeMillis() + extension);
+                        }
+
+                        if (sourceFile.renameTo(destFile)) {
+                            moveSuccess = true;
                         } else {
-                            Log.e(TAG, "Copy-delete fallback failed to copy file: " + sourceFile.getAbsolutePath());
-                            moveSuccess = false;
+                            if (StorageUtils.copyFile(context, sourceFile, destFile)) {
+                                if (StorageUtils.deleteFile(context, sourceFile)) {
+                                    moveSuccess = true;
+                                } else {
+                                    destFile.delete();
+                                }
+                            }
                         }
                     }
 
                     if (moveSuccess) {
                         movedResults.add(result);
                         sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(sourceFile)));
-                        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destFile)));
-                    } else {
-                        Log.w(TAG, "Failed to move file to recycle bin: " + sourceFile.getAbsolutePath());
                     }
                 }
             }
@@ -1635,34 +1466,8 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             }
 
             if (!movedResults.isEmpty()) {
-                // Update master list and refresh UI
                 masterList.removeAll(movedResults);
                 rebuildDisplayList();
-            }
-        }
-
-        private boolean copyFile(File source, File destination) {
-            InputStream in = null;
-            OutputStream out = null;
-            try {
-                in = new FileInputStream(source);
-                out = new FileOutputStream(destination);
-                byte[] buf = new byte[8192];
-                int len;
-                while ((len = in.read(buf)) > 0) {
-                    out.write(buf, 0, len);
-                }
-                return true;
-            } catch (IOException e) {
-                Log.e(TAG, "Standard file copy failed, attempting with StorageUtils", e);
-                return StorageUtils.copyFile(context, source, destination);
-            } finally {
-                try {
-                    if (in != null) in.close();
-                    if (out != null) out.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
             }
         }
     }
