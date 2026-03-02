@@ -65,6 +65,7 @@ public class AdvancedFilePickerAdapter extends RecyclerView.Adapter<AdvancedFile
         holder.thumbnailImage.setTag(file.getAbsolutePath());
 
         if (file.isDirectory()) {
+            // UPDATED: Modern yellow folder icon
             holder.thumbnailImage.setImageResource(R.drawable.ic_folder_modern);
             holder.selectionCheckbox.setVisibility(View.GONE);
             holder.selectionOverlay.setVisibility(View.GONE);
