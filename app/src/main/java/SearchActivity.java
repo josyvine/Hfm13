@@ -115,7 +115,7 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     public static class DateHeader {
         private final String dateString;
         private boolean isChecked;
-        private boolean isExpanded; 
+        private boolean isExpanded;
 
         public DateHeader(String dateString) {
             this.dateString = dateString;
@@ -123,25 +123,45 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             this.isExpanded = true; 
         }
 
-        public String getDateString() {
-            return dateString;
-        }
+        public String getDateString() { return dateString; }
+        public boolean isChecked() { return isChecked; }
+        public void setChecked(boolean checked) { isChecked = checked; }
+        public boolean isExpanded() { return isExpanded; }
+        public void setExpanded(boolean expanded) { isExpanded = expanded; }
+    }
 
-        public boolean isChecked() {
-            return isChecked;
-        }
+    // --- CRITICAL RESTORATION: SearchResult Class ---
+    public static class SearchResult {
+        private final Uri uri;
+        private final long mediaStoreId;
+        private final long lastModifiedForGrouping;
+        private final String displayName;
+        private final String path;
+        private boolean isExcluded;
 
-        public void setChecked(boolean checked) {
-            isChecked = checked;
+        public SearchResult(Uri uri, long mediaStoreId, long lastModifiedMillis, String displayName, String path) {
+            this.uri = uri;
+            this.mediaStoreId = mediaStoreId;
+            this.lastModifiedForGrouping = lastModifiedMillis;
+            this.displayName = displayName;
+            this.path = path;
+            this.isExcluded = true;
         }
-        
-        public boolean isExpanded() {
-            return isExpanded;
-        }
+        public Uri getUri() { return uri; }
+        public long getLastModified() { return mediaStoreId; }
+        public long getLastModifiedForGrouping() { return lastModifiedForGrouping; }
+        public String getDisplayName() { return displayName; }
+        public String getPath() { return path; }
+        public boolean isExcluded() { return isExcluded; }
+        public void setExcluded(boolean excluded) { isExcluded = excluded; }
+    }
 
-        public void setExpanded(boolean expanded) {
-            isExpanded = expanded;
-        }
+    // --- CRITICAL RESTORATION: QueryParameters Class ---
+    private static class QueryParameters {
+        String folderPath;
+        long startTimeSeconds = -1;
+        long endTimeSeconds = -1;
+        void setDateRange(long start, long end) { this.startTimeSeconds = start; this.endTimeSeconds = end; }
     }
 
     @Override
@@ -614,10 +634,10 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                 }
 
                 Pattern p2_gen = Pattern.compile("^day\\s+(\\d+)$");
-                Matcher m2_gen = p2_gen.matcher(q_lower);
-                if (m2_gen.find()) {
+                Matcher p2_matcher = p2_gen.matcher(q_lower);
+                if (p2_matcher.find()) {
                     try {
-                        int day = Integer.parseInt(m2_gen.group(1));
+                        int day = Integer.parseInt(p2_matcher.group(1));
                         if (day > 0) {
                             params.setDateRange(getStartOfDaysAgo(day - 1), getEndOfDaysAgo(day - 1));
                         }
@@ -832,7 +852,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
 			.setPositiveButton("Delete All", new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface dialog, int which) {
-					// UPDATED: Enhancement 4 Logic - Select Batch size
                     final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
                     final int[] batchValues = {1, 5, 10, 20, 30};
 
@@ -849,7 +868,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             .setNeutralButton("Move to Recycle", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
-                    // UPDATED: Enhancement 2 Logic - Choose Bin
                     AlertDialog.Builder binBuilder = new AlertDialog.Builder(SearchActivity.this);
                     binBuilder.setTitle("Choose Recycle Bin");
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
@@ -1241,8 +1259,8 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                     binBuilder.setTitle("Choose Recycle Bin");
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
                         @Override
-                        public void onClick(DialogInterface dialogInterface, int whichBin) {
-                            moveToRecycleBin(selectedResults, whichBin == 1);
+                        public void onClick(DialogInterface dialogInterface, int which) {
+                            moveToRecycleBin(selectedResults, which == 1);
                         }
                     });
                     binBuilder.show();
