@@ -17,12 +17,25 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_toEndOf="@id/date_header_checkbox_browser"
+        android:layout_toStartOf="@+id/header_arrow_browser"
         android:layout_centerVertical="true"
         android:layout_marginStart="8dp"
         android:text="October 27, 2023"
         android:textColor="@android:color/black"
         android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textStyle="bold"
+        android:ellipsize="end"
+        android:maxLines="1" />
+
+    <!-- NEW: Minimize/Expand Arrow icon -->
+    <ImageView
+        android:id="@+id/header_arrow_browser"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:src="@android:drawable/arrow_down_float"
+        android:contentDescription="Toggle Visibility"
+        android:tint="@android:color/darker_gray" />
 
 </RelativeLayout>
-
