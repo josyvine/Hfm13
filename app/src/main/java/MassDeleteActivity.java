@@ -263,28 +263,49 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.DISPLAY_NAME
         };
-        Cursor cursor = getContentResolver().query(queryUri, projection, selection.toString(),
-												   selectionArgs.toArray(new String[0]), MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC");
 
-        if (cursor != null) {
-            int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID);
-            int mediaTypeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE);
-            int displayNameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME);
-            while (cursor.moveToNext()) {
-                long id = cursor.getLong(idColumn);
-                int mediaType = cursor.getInt(mediaTypeColumn);
-                String displayName = cursor.getString(displayNameColumn);
-                Uri contentUri;
-                if (mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE) {
-                    contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-                } else if (mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) {
-                    contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
-                } else {
-                    contentUri = ContentUris.withAppendedId(queryUri, id);
+        // FIXED: Pagination logic to prevent CursorWindow overflow
+        final int pageSize = 2000;
+        int offset = 0;
+        boolean hasMore = true;
+
+        while (hasMore) {
+            String sortOrder = MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC LIMIT " + pageSize + " OFFSET " + offset;
+            Cursor cursor = getContentResolver().query(queryUri, projection, selection.toString(),
+                    selectionArgs.toArray(new String[0]), sortOrder);
+
+            if (cursor != null) {
+                int count = cursor.getCount();
+                if (count == 0) {
+                    hasMore = false;
+                    cursor.close();
+                    continue;
                 }
-                results.add(new MassDeleteAdapter.SearchResult(contentUri, id, displayName));
+
+                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID);
+                int mediaTypeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE);
+                int displayNameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME);
+                
+                while (cursor.moveToNext()) {
+                    long id = cursor.getLong(idColumn);
+                    int mediaType = cursor.getInt(mediaTypeColumn);
+                    String displayName = cursor.getString(displayNameColumn);
+                    Uri contentUri;
+                    if (mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE) {
+                        contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+                    } else if (mediaType == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO) {
+                        contentUri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                    } else {
+                        contentUri = ContentUris.withAppendedId(queryUri, id);
+                    }
+                    results.add(new MassDeleteAdapter.SearchResult(contentUri, id, displayName));
+                }
+                cursor.close();
+                offset += pageSize;
+                if (count < pageSize) hasMore = false;
+            } else {
+                hasMore = false;
             }
-            cursor.close();
         }
         return results;
     }
@@ -294,7 +315,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         File externalStorage = Environment.getExternalStorageDirectory();
 
         List<File> rootsToScan = new ArrayList<>();
-        // Standard User 0 paths
         rootsToScan.add(new File(externalStorage, "WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Android/media/com.whatsapp/WhatsApp"));
         rootsToScan.add(new File(externalStorage, "Download"));
@@ -303,8 +323,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         rootsToScan.add(new File(externalStorage, "Pictures"));
         rootsToScan.add(new File(externalStorage, "DCIM/Camera"));
 
-        // --- ADDED: Support for Cloned Apps (User 999 and User 10) ---
-        // Dual Messenger usually uses user 999
         File dualAppStorage = new File("/storage/emulated/999");
         if (dualAppStorage.exists() && dualAppStorage.canRead()) {
              rootsToScan.add(new File(dualAppStorage, "WhatsApp"));
@@ -313,7 +331,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
              rootsToScan.add(new File(dualAppStorage, "Download"));
         }
         
-        // Some devices use user 10
         File parallelAppStorage = new File("/storage/emulated/10");
         if (parallelAppStorage.exists() && parallelAppStorage.canRead()) {
              rootsToScan.add(new File(parallelAppStorage, "WhatsApp"));
@@ -421,7 +438,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
                 params.endRange = Integer.parseInt(matcher.group(2));
                 modifiedQuery = matcher.replaceAll("").trim();
             } catch (NumberFormatException e) {
-                // Ignore
             }
         }
 
@@ -532,7 +548,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
 			.setPositiveButton("Delete Permanently", new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface dialog, int which) {
-					// NEW LOGIC: Ask for Batch Size (Enhancement 4)
+                    // NEW: Batch size selection logic
                     final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
                     final int[] batchValues = {1, 5, 10, 20, 30};
 
@@ -541,7 +557,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
                         .setItems(batchOptions, new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface dialogInterface, int index) {
-                                performDelete(toDelete, batchValues[index]); // Pass chosen size
+                                performDelete(toDelete, batchValues[index]);
                             }
                         }).show();
 				}
@@ -549,7 +565,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
             .setNeutralButton("Move to Recycle", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
-                    // NEW LOGIC: Ask Phone or SD Card (Enhancement 2)
+                    // NEW: Recycle Bin selection logic
                     AlertDialog.Builder binBuilder = new AlertDialog.Builder(MassDeleteActivity.this);
                     binBuilder.setTitle("Choose Recycle Bin");
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
@@ -590,8 +606,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
     }
 
     private void moveToRecycleBin(List<MassDeleteAdapter.SearchResult> resultsToMove) {
-        // Updated to use the default MoveToRecycleTask which now asks for confirmation internally in this file
-        // However, we refactored confirmAndDelete to call MoveToRecycleTask directly with boolean
     }
 
     private void performDelete(final List<MassDeleteAdapter.SearchResult> toDelete, int batchSize) {
@@ -614,7 +628,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
 
         Intent intent = new Intent(this, DeleteService.class);
         intent.putStringArrayListExtra(DeleteService.EXTRA_FILES_TO_DELETE, filePathsToDelete);
-        intent.putExtra("batch_size", batchSize); // Enhancement 4: Pass batch size
+        intent.putExtra("batch_size", batchSize);
         ContextCompat.startForegroundService(this, intent);
     }
 
@@ -751,11 +765,12 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         deleteCompletionReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                // FIXED: count fix
                 int deletedCount = intent.getIntExtra(DeleteService.EXTRA_DELETED_COUNT, 0);
                 Toast.makeText(MassDeleteActivity.this, "Deletion complete. " + deletedCount + " files removed.", Toast.LENGTH_LONG).show();
 
                 deletionProgressLayout.setVisibility(View.GONE);
-                executeQuery(searchInput.getText().toString()); // Refresh the list
+                executeQuery(searchInput.getText().toString()); 
             }
         };
         LocalBroadcastManager.getInstance(this).registerReceiver(deleteCompletionReceiver, new IntentFilter(DeleteService.ACTION_DELETE_COMPLETE));
@@ -765,7 +780,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
             public void onReceive(Context context, Intent intent) {
                 boolean success = intent.getBooleanExtra(CompressionService.EXTRA_SUCCESS, false);
                 if (success) {
-                    // Refresh the current view to show the new zip file
                     executeQuery(searchInput.getText().toString());
                 }
             }
@@ -869,13 +883,12 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         recycleButton.setOnClickListener(new View.OnClickListener() {
 				@Override
 				public void onClick(View v) {
-                    // Dialog to choose phone or SD bin (Enhancement 2)
                     AlertDialog.Builder binBuilder = new AlertDialog.Builder(MassDeleteActivity.this);
                     binBuilder.setTitle("Choose Recycle Bin");
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
                         @Override
-                        public void onClick(DialogInterface dialogInterface, int which) {
-                            new MoveToRecycleTask(selectedResults, which == 1).execute();
+                        public void onClick(DialogInterface dialogInterface, int whichBin) {
+                            new MoveToRecycleTask(selectedResults, whichBin == 1).execute();
                         }
                     });
                     binBuilder.show();
@@ -1050,8 +1063,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
 
         @Override
         protected List<MassDeleteAdapter.SearchResult> doInBackground(Void... voids) {
-            // Updated Logic for Enhancement 2: Check destination and use SAF if needed
-            
             File recycleBinDir = new File(Environment.getExternalStorageDirectory(), "HFMRecycleBin");
             if (!recycleBinDir.exists() && !useSdCardBin) {
                  if (!recycleBinDir.mkdir()) return new ArrayList<>();
@@ -1064,14 +1075,11 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
                     boolean moveSuccess = false;
                     
                     if (useSdCardBin && StorageUtils.isFileOnSdCard(context, sourceFile)) {
-                         // Use new SAF move method
                          if (StorageUtils.moveFileOnSdCardSafely(context, sourceFile)) {
                              moveSuccess = true;
                          }
                     } else {
-                         // Existing phone-to-phone or cross-volume copy logic
                         File destFile = new File(recycleBinDir, sourceFile.getName());
-                        // handle conflicts...
                          if (destFile.exists()) {
                             String name = sourceFile.getName();
                             String extension = "";
@@ -1099,7 +1107,6 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
                     if (moveSuccess) {
                         movedResults.add(result);
                         sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(sourceFile)));
-                        if(!useSdCardBin) sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(new File(recycleBinDir, sourceFile.getName())))); // scan destination only if known path
                     }
                 }
             }
