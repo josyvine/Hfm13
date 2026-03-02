@@ -115,7 +115,7 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
     public static class DateHeader {
         private final String dateString;
         private boolean isChecked;
-        private boolean isExpanded;
+        private boolean isExpanded; 
 
         public DateHeader(String dateString) {
             this.dateString = dateString;
@@ -130,7 +130,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         public void setExpanded(boolean expanded) { isExpanded = expanded; }
     }
 
-    // --- CRITICAL RESTORATION: SearchResult Class ---
     public static class SearchResult {
         private final Uri uri;
         private final long mediaStoreId;
@@ -156,7 +155,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         public void setExcluded(boolean excluded) { isExcluded = excluded; }
     }
 
-    // --- CRITICAL RESTORATION: QueryParameters Class ---
     private static class QueryParameters {
         String folderPath;
         long startTimeSeconds = -1;
@@ -1264,7 +1262,7 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                         }
                     });
                     binBuilder.show();
-					dialog.dismiss();
+                    dialog.dismiss();
 				}
 			});
 
@@ -1421,6 +1419,82 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         return sb.toString();
     }
 
+    private void openFileViewer(final SearchResult item) {
+        new AsyncTask<Void, Void, Intent>() {
+            @Override
+            protected Intent doInBackground(Void... voids) {
+                File file = new File(item.getPath());
+                String path = file.getAbsolutePath();
+                String name = file.getName();
+                int category = getFileCategory(name);
+                Intent intent = null;
+
+                if (category == CATEGORY_IMAGES || category == CATEGORY_VIDEOS || category == CATEGORY_AUDIO) {
+                    ArrayList<String> fileList = getSiblingFilesForViewer(file, category);
+                    int currentIndex = fileList.indexOf(path);
+                    if (currentIndex == -1) {
+						return null;
+                    }
+
+                    if (category == CATEGORY_IMAGES) {
+                        intent = new Intent(SearchActivity.this, ImageViewerActivity.class);
+                        intent.putStringArrayListExtra(ImageViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
+                        intent.putExtra(ImageViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
+                    } else if (category == CATEGORY_VIDEOS) {
+                        intent = new Intent(SearchActivity.this, VideoViewerActivity.class);
+                        intent.putStringArrayListExtra(VideoViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
+                        intent.putExtra(VideoViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
+                    } else if (category == CATEGORY_AUDIO) {
+                        intent = new Intent(SearchActivity.this, AudioPlayerActivity.class);
+                        intent.putStringArrayListExtra(AudioPlayerActivity.EXTRA_FILE_PATH_LIST, fileList);
+                        intent.putExtra(AudioPlayerActivity.EXTRA_CURRENT_INDEX, currentIndex);
+                    }
+                } else {
+                    if (name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
+                        intent = new Intent(SearchActivity.this, PdfViewerActivity.class);
+                    } else {
+                        intent = new Intent(SearchActivity.this, TextViewerActivity.class);
+                    }
+                    intent.putExtra(TextViewerActivity.EXTRA_FILE_PATH, path);
+                }
+                return intent;
+            }
+
+            @Override
+            protected void onPostExecute(Intent intent) {
+                if (intent != null) {
+                    startActivity(intent);
+                } else {
+                    Toast.makeText(SearchActivity.this, "Error opening file.", Toast.LENGTH_SHORT).show();
+                }
+            }
+        }.execute();
+    }
+
+    private ArrayList<String> getSiblingFilesForViewer(File currentFile, final int category) {
+        ArrayList<String> siblingFiles = new ArrayList<>();
+        File parentDir = currentFile.getParentFile();
+        if (parentDir == null || !parentDir.isDirectory()) {
+            siblingFiles.add(currentFile.getAbsolutePath());
+            return siblingFiles;
+        }
+        for (Object item : masterList) {
+            if (item instanceof SearchResult) {
+                SearchResult result = (SearchResult) item;
+                if (result.getPath() != null) {
+                    File file = new File(result.getPath());
+                    if (file.getParentFile() != null && file.getParentFile().equals(parentDir)) {
+                        if (getFileCategory(file.getName()) == category) {
+                            siblingFiles.add(file.getAbsolutePath());
+                        }
+                    }
+                }
+            }
+        }
+        Collections.sort(siblingFiles);
+        return siblingFiles;
+    }
+
     private class MoveToRecycleTask extends AsyncTask<Void, Void, List<SearchResult>> {
         private AlertDialog progressDialog;
         private List<SearchResult> resultsToMove;
@@ -1453,11 +1527,9 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
             List<SearchResult> movedResults = new ArrayList<>();
             for (SearchResult result : resultsToMove) {
                 if (result.getPath() == null) continue;
-
                 File sourceFile = new File(result.getPath());
                 if (sourceFile.exists()) {
                     boolean moveSuccess = false;
-                    
                     if (useSdCardBin && StorageUtils.isFileOnSdCard(context, sourceFile)) {
                          if (StorageUtils.moveFileOnSdCardSafely(context, sourceFile)) {
                              moveSuccess = true;
@@ -1474,7 +1546,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                             }
                             destFile = new File(recycleBinDir, name + "_" + System.currentTimeMillis() + extension);
                         }
-
                         if (sourceFile.renameTo(destFile)) {
                             moveSuccess = true;
                         } else {
@@ -1487,7 +1558,6 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                             }
                         }
                     }
-
                     if (moveSuccess) {
                         movedResults.add(result);
                         sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(sourceFile)));
@@ -1500,13 +1570,11 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
         @Override
         protected void onPostExecute(List<SearchResult> movedResults) {
             progressDialog.dismiss();
-
             if (movedResults.isEmpty() && !resultsToMove.isEmpty()) {
                 Toast.makeText(context, "Failed to move some or all files.", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(context, movedResults.size() + " file(s) moved to Recycle Bin.", Toast.LENGTH_LONG).show();
             }
-
             if (!movedResults.isEmpty()) {
                 masterList.removeAll(movedResults);
                 rebuildDisplayList();
@@ -1535,6 +1603,21 @@ public class SearchActivity extends Activity implements SearchAdapter.OnItemClic
                     e.printStackTrace();
                 }
             }
+        }
+    }
+
+    private class PinchZoomListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
+        @Override
+        public boolean onScale(ScaleGestureDetector detector) {
+            float scaleFactor = detector.getScaleFactor();
+            int previousSpanCount = currentSpanCount;
+            if (scaleFactor > 1.05f) currentSpanCount = Math.max(MIN_SPAN_COUNT, currentSpanCount - 1);
+            else if (scaleFactor < 0.95f) currentSpanCount = Math.min(MAX_SPAN_COUNT, currentSpanCount + 1);
+            if (previousSpanCount != currentSpanCount) {
+                gridLayoutManager.setSpanCount(currentSpanCount);
+                adapter.notifyDataSetChanged();
+            }
+            return true;
         }
     }
 }
