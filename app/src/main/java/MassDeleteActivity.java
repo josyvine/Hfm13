@@ -553,6 +553,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
 			.setPositiveButton("Delete Permanently", new DialogInterface.OnClickListener() {
 				@Override
 				public void onClick(DialogInterface dialog, int which) {
+                    // NEW: Batch size selection logic
                     final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
                     final int[] batchValues = {1, 5, 10, 20, 30};
 
@@ -569,6 +570,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
             .setNeutralButton("Move to Recycle", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
+                    // NEW: Recycle Bin selection logic
                     AlertDialog.Builder binBuilder = new AlertDialog.Builder(MassDeleteActivity.this);
                     binBuilder.setTitle("Choose Recycle Bin");
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
@@ -800,6 +802,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
         deleteCompletionReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
+                // FIXED: count fix
                 int deletedCount = intent.getIntExtra(DeleteService.EXTRA_DELETED_COUNT, 0);
                 Toast.makeText(MassDeleteActivity.this, "Deletion complete. " + deletedCount + " files removed.", Toast.LENGTH_LONG).show();
 
@@ -1168,7 +1171,7 @@ public class MassDeleteActivity extends Activity implements MassDeleteAdapter.On
 
                     if (moveSuccess) {
                         movedResults.add(result);
-                        context.sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(sourceFile)));
+                        // UPDATE: Removed context.sendBroadcast(ACTION_MEDIA_SCANNER_SCAN_FILE) to prevent intent spam
                     }
                 }
             }
