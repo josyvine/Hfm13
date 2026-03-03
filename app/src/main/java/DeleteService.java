@@ -86,17 +86,18 @@ public class DeleteService extends IntentService {
                 batchFiles.add(new File(path));
             }
 
-            // Call optimized bulk delete and sum the results for the Toast fix
+            // UPDATE 3: Call optimized bulk delete and accurately sum the results
+            // Because Android 11+ permission is handled in the Activity now, this runs unhindered.
             deletedCount += FileUtils.deleteFileBatch(this, batchFiles);
 
-            // --- UPDATE 3: Check permission again before updating the notification ---
+            // --- UPDATE 4: Check permission again before updating the notification ---
             if (canShowNotification) {
                 String progressText = "Deleted " + Math.min(i + batchSize, totalFiles) + " of " + totalFiles + "...";
                 notificationManager.notify(NOTIFICATION_ID, createNotification(progressText, Math.min(i + batchSize, totalFiles), totalFiles));
             }
         }
 
-        // Send completion broadcast with the accurate count (Toast fix)
+        // Send completion broadcast with the accurate count to the Activity
         Intent broadcastIntent = new Intent(ACTION_DELETE_COMPLETE);
         broadcastIntent.putExtra(EXTRA_DELETED_COUNT, deletedCount);
         LocalBroadcastManager.getInstance(this).sendBroadcast(broadcastIntent);
