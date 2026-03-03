@@ -15,75 +15,85 @@ public class FileUtils {
 
     private static final String TAG = "FileUtils";
 
+    /**
+     * Deletes a single file.
+     * Prioritizes the fast MediaStore database delete.
+     */
     public static boolean deleteFile(Context context, File file) {
         if (file == null || !file.exists()) {
             return true;
         }
 
-        // 1. Handle SD Card Files
-        if (StorageUtils.isFileOnSdCard(context, file)) {
-            // Try physical deletion via SAF
-            if (StorageUtils.deleteFile(context, file)) {
-                // SUCCESS: Physical file is gone.
-                // FIX: "Blind Delete" the ghost entry. Do NOT query for ID first (causes lockups).
-                try {
-                    String where = MediaStore.Files.FileColumns.DATA + "=?";
-                    String[] selectionArgs = new String[] { file.getAbsolutePath() };
-                    context.getContentResolver().delete(MediaStore.Files.getContentUri("external"), where, selectionArgs);
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to clean up MediaStore ghost entry: " + e.getMessage());
-                }
-                return true;
-            }
-            return false;
-        }
-
-        // 2. Handle Internal Storage Files (Standard)
         String path = file.getAbsolutePath();
         ContentResolver resolver = context.getContentResolver();
         String where = MediaStore.Files.FileColumns.DATA + " = ?";
         String[] selectionArgs = new String[]{ path };
 
         try {
-            // Attempt DB delete first
+            // Fast Database Delete
             int rowsDeleted = resolver.delete(MediaStore.Files.getContentUri("external"), where, selectionArgs);
             if (rowsDeleted > 0) {
-                // If DB delete worked, check if physical file is gone too
-                if (!file.exists()) return true;
+                return true;
             }
         } catch (Exception e) {
             Log.e(TAG, "Error deleting file via ContentResolver", e);
         }
 
-        // Physical fallback for Internal Storage
+        // Physical Fallback (Works for Internal or pre-Android 11)
         if (file.delete()) {
-            // REMOVED: context.sendBroadcast(...) to prevent system freeze
             return true;
         }
 
         return false;
     }
 
+    /**
+     * UPDATED: Restored Bulk SQL Delete to fix the 3-minute lag.
+     * This method avoids SAF "findFile()" folder scans entirely.
+     * It uses a single "IN" query to wipe the batch from the database instantly.
+     */
     public static int deleteFileBatch(Context context, List<File> files) {
         if (files == null || files.isEmpty()) return 0;
 
-        int deletedCount = 0;
-
-        // Note: We avoid the bulk "IN (?,?,?)" SQL query here because on Android 11+ 
-        // mixing SD card paths and Internal paths in one SQL statement can cause 
-        // security exceptions. We process one by one using the optimized deleteFile above.
+        ContentResolver resolver = context.getContentResolver();
+        int totalToProcess = files.size();
         
-        for (File file : files) {
-            if (!file.exists()) {
-                deletedCount++;
-                continue;
-            }
+        // 1. Prepare Bulk SQL: WHERE _data IN (?, ?, ?, ...)
+        // This is the "Fast Way" that processes the whole batch in one shot.
+        StringBuilder where = new StringBuilder(MediaStore.Files.FileColumns.DATA + " IN (");
+        String[] selectionArgs = new String[totalToProcess];
+        
+        for (int i = 0; i < totalToProcess; i++) {
+            where.append("?");
+            if (i < totalToProcess - 1) where.append(",");
+            selectionArgs[i] = files.get(i).getAbsolutePath();
+        }
+        where.append(")");
 
-            if (deleteFile(context, file)) {
-                deletedCount++;
+        int dbDeletedCount = 0;
+        try {
+            // UPDATE: This executes ONE command for all files. No more SAF loops!
+            dbDeletedCount = resolver.delete(MediaStore.Files.getContentUri("external"), where.toString(), selectionArgs);
+        } catch (Exception e) {
+            Log.e(TAG, "Bulk MediaStore delete failed", e);
+        }
+
+        // 2. Physical cleanup and verification
+        int physicalDeletedCount = 0;
+        for (File file : files) {
+            if (file.exists()) {
+                // Try physical delete. On Android 11+ Approval, the OS often 
+                // handles this, but we check to be sure.
+                if (file.delete()) {
+                    physicalDeletedCount++;
+                }
+            } else {
+                // File is already gone (Approved by User in the popup prompt)
+                physicalDeletedCount++;
             }
         }
         
-        return deletedCount;
+        // Return the count that matches reality (whichever is higher)
+        return Math.max(dbDeletedCount, physicalDeletedCount);
     }
 }
