@@ -26,6 +26,9 @@ public class StorageUtils {
     
     public static final String SD_RECYCLE_BIN_NAME = "HFMRecycleBin";
 
+    // UPDATE: Static cache variable to prevent ANR crash on large file selections
+    private static String cachedSdCardPath = null;
+
     public static void saveSdCardUri(Context context, Uri uri) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString(KEY_SDCARD_URI, uri.toString()).apply();
@@ -83,6 +86,7 @@ public class StorageUtils {
     }
 
     public static boolean isFileOnSdCard(Context context, File file) {
+        // UPDATE: This method is now instant because it uses the cached path variable
         String sdCardPath = getSdCardPath(context);
         if (sdCardPath != null && file != null) {
             try {
@@ -97,18 +101,14 @@ public class StorageUtils {
     public static boolean deleteFile(Context context, File file) {
         if (file == null || !file.exists()) return true;
 
-        // Try standard delete first (works for Internal)
         if (file.delete()) {
-            // REMOVED: context.sendBroadcast(...) to prevent system lockup
             return true;
         }
 
-        // If standard delete fails, try SAF (for SD Card)
         if (isFileOnSdCard(context, file)) {
             DocumentFile docFile = getDocumentFile(context, file, false);
             if (docFile != null && docFile.exists()) {
                 if (docFile.delete()) {
-                    // REMOVED: context.sendBroadcast(...) to prevent system lockup
                     return true;
                 }
             }
@@ -129,13 +129,20 @@ public class StorageUtils {
     }
 
     public static String getSdCardPath(Context context) {
+        // UPDATE: Check cache first. If we already know the path, return it immediately.
+        // This avoids the expensive 'getExternalFilesDirs' Binder call inside loops.
+        if (cachedSdCardPath != null) {
+            return cachedSdCardPath;
+        }
+
         File[] storageVolumes = context.getExternalFilesDirs(null);
         if (storageVolumes.length > 1 && storageVolumes[1] != null) {
             String fullPath = storageVolumes[1].getAbsolutePath();
             if (fullPath.contains("/Android/data")) {
                 try {
                     String rootPath = fullPath.substring(0, fullPath.indexOf("/Android/data"));
-                    return new File(rootPath).getCanonicalPath();
+                    cachedSdCardPath = new File(rootPath).getCanonicalPath();
+                    return cachedSdCardPath;
                 } catch (IOException e) {
                     return null;
                 }
