@@ -46,9 +46,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -84,6 +86,10 @@ public class FileDeleteActivity extends Activity {
 
     private List<File> mFilesPendingPermission;
     private Runnable mPendingOperation;
+    
+    // For batch deletion permission handling
+    private ArrayList<String> mPendingFilePathsToDelete;
+    private int mPendingBatchSize;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -464,49 +470,105 @@ public class FileDeleteActivity extends Activity {
         return sb.toString();
     }
 
-
     private void initiateDeletionProcess() {
         final List<File> initiallySelectedFiles = getSelectedFiles();
-
         if (initiallySelectedFiles.isEmpty()) {
             Toast.makeText(this, "No files selected.", Toast.LENGTH_SHORT).show();
             return;
         }
+        
+        // Start background pre-check
+        new PreDeletionCheckTask().execute();
+    }
+    
+    private class PreDeletionCheckTask extends AsyncTask<Void, Void, PreDeletionResults> {
+        private AlertDialog progressDialog;
+        
+        @Override
+        protected void onPreExecute() {
+            progressDialog = new AlertDialog.Builder(FileDeleteActivity.this)
+                    .setMessage("Processing related files...")
+                    .setCancelable(false)
+                    .create();
+            progressDialog.show();
+        }
+        
+        @Override
+        protected PreDeletionResults doInBackground(Void... voids) {
+            // Re-acquire selection in background
+            List<File> filesToConfirm = getSelectedFiles();
+            
+            // Optimization: Use a Map to cache folder contents to prevent O(N^2) disk reads
+            Set<File> masterDeleteSet = new HashSet<>();
+            Map<String, File[]> dirCache = new HashMap<>();
 
-        boolean requiresSdCardPermission = false;
-        for (File file : initiallySelectedFiles) {
-            if (StorageUtils.isFileOnSdCard(this, file) && !StorageUtils.hasSdCardPermission(this)) {
-                requiresSdCardPermission = true;
-                break;
+            for (File selectedFile : filesToConfirm) {
+                masterDeleteSet.add(selectedFile);
+                Matcher matcher = FILE_BASE_NAME_PATTERN.matcher(selectedFile.getName());
+                if (matcher.find()) {
+                    String baseName = matcher.group(0);
+                    File parentDir = selectedFile.getParentFile();
+                    if (parentDir != null) {
+                        String parentPath = parentDir.getAbsolutePath();
+                        if (!dirCache.containsKey(parentPath)) {
+                            dirCache.put(parentPath, parentDir.listFiles());
+                        }
+                        
+                        File[] filesInDir = dirCache.get(parentPath);
+                        if (filesInDir != null) {
+                            for (File potentialSibling : filesInDir) {
+                                if (potentialSibling.isFile() && potentialSibling.getName().startsWith(baseName)) {
+                                    masterDeleteSet.add(potentialSibling);
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
+            List<File> finalToDelete = new ArrayList<>(masterDeleteSet);
+            boolean requiresSdCardPermission = false;
+            for (File file : finalToDelete) {
+                if (StorageUtils.isFileOnSdCard(FileDeleteActivity.this, file) && !StorageUtils.hasSdCardPermission(FileDeleteActivity.this)) {
+                    requiresSdCardPermission = true;
+                    break;
+                }
+            }
+            
+            return new PreDeletionResults(finalToDelete, requiresSdCardPermission, filesToConfirm.size());
         }
 
-        if (requiresSdCardPermission) {
-            mFilesPendingPermission = initiallySelectedFiles;
-            mPendingOperation = new Runnable() {
-                @Override
-                public void run() {
-                    showDeleteConfirmationDialog(initiallySelectedFiles);
-                }
-            };
-            promptForSdCardPermission();
-        } else {
-            showDeleteConfirmationDialog(initiallySelectedFiles);
+        @Override
+        protected void onPostExecute(PreDeletionResults results) {
+            if (progressDialog != null && progressDialog.isShowing()) progressDialog.dismiss();
+            
+            if (results.requiresSdCardPermission) {
+                mFilesPendingPermission = results.filesToDelete;
+                mPendingOperation = () -> showDeleteConfirmationDialog(results.filesToDelete, results.originalCount);
+                promptForSdCardPermission();
+            } else {
+                showDeleteConfirmationDialog(results.filesToDelete, results.originalCount);
+            }
+        }
+    }
+    
+    private static class PreDeletionResults {
+        List<File> filesToDelete;
+        boolean requiresSdCardPermission;
+        int originalCount;
+        
+        PreDeletionResults(List<File> filesToDelete, boolean requiresSdCardPermission, int originalCount) {
+            this.filesToDelete = filesToDelete;
+            this.requiresSdCardPermission = requiresSdCardPermission;
+            this.originalCount = originalCount;
         }
     }
 
-    private void showDeleteConfirmationDialog(final List<File> filesToConfirm) {
-        final Set<File> masterDeleteSet = new HashSet<>();
-        for (File selectedFile : filesToConfirm) {
-            masterDeleteSet.addAll(findSiblingFiles(selectedFile));
-        }
-
-        final List<File> filesToDelete = new ArrayList<>(masterDeleteSet);
+    private void showDeleteConfirmationDialog(final List<File> filesToDelete, int originalSelectionCount) {
         String dialogMessage;
-
-        if (filesToDelete.size() > filesToConfirm.size()) {
-            int siblingCount = filesToDelete.size() - filesToConfirm.size();
-            dialogMessage = "You selected <b>" + filesToConfirm.size() + "</b> file(s), but we found <b>" + siblingCount
+        if (filesToDelete.size() > originalSelectionCount) {
+            int siblingCount = filesToDelete.size() - originalSelectionCount;
+            dialogMessage = "You selected <b>" + originalSelectionCount + "</b> file(s), but we found <b>" + siblingCount
 				+ "</b> other related version(s) (e.g., with map overlays).<br/><br/>Are you sure you want to permanently delete all <b>"
 				+ filesToDelete.size() + "</b> related files? This action cannot be undone.";
         } else {
@@ -552,186 +614,23 @@ public class FileDeleteActivity extends Activity {
 			.show();
     }
 
-    private List<File> findSiblingFiles(File originalFile) {
-        List<File> siblings = new ArrayList<>();
-        siblings.add(originalFile);
-
-        String fileName = originalFile.getName();
-        Matcher matcher = FILE_BASE_NAME_PATTERN.matcher(fileName);
-
-        if (matcher.find()) {
-            String baseName = matcher.group(0);
-            File parentDir = originalFile.getParentFile();
-
-            if (parentDir != null && parentDir.isDirectory()) {
-                File[] filesInDir = parentDir.listFiles();
-                if (filesInDir != null) {
-                    for (File potentialSibling : filesInDir) {
-                        if (potentialSibling.isFile() && potentialSibling.getName().startsWith(baseName)) {
-                            if (!potentialSibling.getAbsolutePath().equals(originalFile.getAbsolutePath())) {
-                                siblings.add(potentialSibling);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return siblings;
-    }
-
     private void performDeletion(List<File> filesToDelete, int batchSize) {
         ArrayList<String> filePathsToDelete = new ArrayList<>();
         for (File file : filesToDelete) {
             filePathsToDelete.add(file.getAbsolutePath());
         }
+        
+        // LOAD BRIDGE to prevent crash on massive selections
+        FileBridge.mFilesToDelete = filePathsToDelete;
 
         deletionProgressLayout.setVisibility(View.VISIBLE);
         deletionProgressBar.setIndeterminate(true);
         deletionProgressText.setText("Starting deletion...");
 
         Intent intent = new Intent(this, DeleteService.class);
-        intent.putStringArrayListExtra(DeleteService.EXTRA_FILES_TO_DELETE, filePathsToDelete);
-        intent.putExtra("batch_size", batchSize); // Pass batch size
+        // Note: We don't put the huge array list into extra, the service reads from Bridge
+        intent.putExtra("batch_size", batchSize); 
         ContextCompat.startForegroundService(this, intent);
-    }
-
-    private void setupBroadcastReceivers() {
-        deleteCompletionReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                int deletedCount = intent.getIntExtra(DeleteService.EXTRA_DELETED_COUNT, 0);
-                Toast.makeText(FileDeleteActivity.this, "Deletion complete. " + deletedCount + " files removed.", Toast.LENGTH_LONG).show();
-
-                deletionProgressLayout.setVisibility(View.GONE);
-
-                Intent resultIntent = new Intent();
-                FileDeleteActivity.this.setResult(Activity.RESULT_OK, resultIntent);
-                finish();
-            }
-        };
-        LocalBroadcastManager.getInstance(this).registerReceiver(deleteCompletionReceiver, new IntentFilter(DeleteService.ACTION_DELETE_COMPLETE));
-
-        compressionBroadcastReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                boolean success = intent.getBooleanExtra(CompressionService.EXTRA_SUCCESS, false);
-                if (success) {
-                    FileDeleteActivity.this.setResult(Activity.RESULT_OK);
-                    finish();
-                }
-            }
-        };
-        LocalBroadcastManager.getInstance(this).registerReceiver(compressionBroadcastReceiver, new IntentFilter(CompressionService.ACTION_COMPRESSION_COMPLETE));
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (deleteCompletionReceiver != null) {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(deleteCompletionReceiver);
-        }
-        if (compressionBroadcastReceiver != null) {
-            LocalBroadcastManager.getInstance(this).unregisterReceiver(compressionBroadcastReceiver);
-        }
-        super.onDestroy();
-    }
-
-    private int getFileCategory(String fileName) {
-        String extension = "";
-        int i = fileName.lastIndexOf('.');
-        if (i > 0) {
-            extension = fileName.substring(i + 1).toLowerCase(Locale.ROOT);
-        }
-
-        List<String> imageExtensions = Arrays.asList("jpg", "jpeg", "png", "gif", "bmp", "webp");
-        List<String> videoExtensions = Arrays.asList("mp4", "3gp", "mkv", "webm", "avi");
-        List<String> audioExtensions = Arrays.asList("mp3", "wav", "ogg", "m4a", "aac", "flac");
-        List<String> scriptExtensions = Arrays.asList("json", "xml", "html", "js", "css", "java", "kt", "py", "c", "cpp", "h", "cs", "php", "rb", "go", "swift", "sh", "bat", "ps1", "ini", "cfg", "conf", "md", "prop", "gradle", "pro", "sql");
-        List<String> docExtensions = Arrays.asList("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv");
-
-        if (imageExtensions.contains(extension)) return CATEGORY_IMAGES;
-        if (videoExtensions.contains(extension)) return CATEGORY_VIDEOS;
-        if (audioExtensions.contains(extension)) return CATEGORY_AUDIO;
-        if (scriptExtensions.contains(extension)) return CATEGORY_SCRIPTS;
-        if (docExtensions.contains(extension)) return CATEGORY_DOCS;
-        return CATEGORY_OTHER;
-    }
-
-    private void openFileViewer(final File file) {
-        new AsyncTask<Void, Void, Intent>() {
-            @Override
-            protected Intent doInBackground(Void... voids) {
-                String path = file.getAbsolutePath();
-                String name = file.getName();
-                int category = getFileCategory(name);
-                Intent intent = null;
-
-                if (category == CATEGORY_IMAGES || category == CATEGORY_VIDEOS || category == CATEGORY_AUDIO) {
-                    ArrayList<String> fileList = getSiblingFilesForViewer(file, category);
-                    int currentIndex = fileList.indexOf(path);
-                    if (currentIndex == -1) {
-						return null;
-                    }
-
-                    if (category == CATEGORY_IMAGES) {
-                        intent = new Intent(FileDeleteActivity.this, ImageViewerActivity.class);
-                        intent.putStringArrayListExtra(ImageViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(ImageViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    } else if (category == CATEGORY_VIDEOS) {
-                        intent = new Intent(FileDeleteActivity.this, VideoViewerActivity.class);
-                        intent.putStringArrayListExtra(VideoViewerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(VideoViewerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    } else if (category == CATEGORY_AUDIO) {
-                        intent = new Intent(FileDeleteActivity.this, AudioPlayerActivity.class);
-                        intent.putStringArrayListExtra(AudioPlayerActivity.EXTRA_FILE_PATH_LIST, fileList);
-                        intent.putExtra(AudioPlayerActivity.EXTRA_CURRENT_INDEX, currentIndex);
-                    }
-                } else {
-                    if (name.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-                        intent = new Intent(FileDeleteActivity.this, PdfViewerActivity.class);
-                    } else {
-                        intent = new Intent(FileDeleteActivity.this, TextViewerActivity.class);
-                    }
-                    intent.putExtra(TextViewerActivity.EXTRA_FILE_PATH, path);
-                }
-                return intent;
-            }
-
-            @Override
-            protected void onPostExecute(Intent intent) {
-                if (intent != null) {
-                    startActivity(intent);
-                } else {
-                    Toast.makeText(FileDeleteActivity.this, "Error opening file.", Toast.LENGTH_SHORT).show();
-                }
-            }
-        }.execute();
-    }
-
-    private ArrayList<String> getSiblingFilesForViewer(File currentFile, final int category) {
-        ArrayList<String> siblingFiles = new ArrayList<>();
-        File parentDir = currentFile.getParentFile();
-        if (parentDir == null || !parentDir.isDirectory()) {
-            siblingFiles.add(currentFile.getAbsolutePath());
-            return siblingFiles;
-        }
-
-        File[] filesInDir = parentDir.listFiles();
-        if (filesInDir != null) {
-            List<File> sortedFiles = new ArrayList<>(Arrays.asList(filesInDir));
-            Collections.sort(sortedFiles, new Comparator<File>() {
-					@Override
-					public int compare(File f1, File f2) {
-						return f1.getName().compareToIgnoreCase(f2.getName());
-					}
-				});
-
-            for (File file : sortedFiles) {
-                if (file.isFile() && getFileCategory(file.getName()) == category) {
-                    siblingFiles.add(file.getAbsolutePath());
-                }
-            }
-        }
-        return siblingFiles;
     }
 
     private void promptForSdCardPermission() {
@@ -765,7 +664,7 @@ public class FileDeleteActivity extends Activity {
                     if (mPendingOperation != null) {
                         mPendingOperation.run();
                     } else if (mFilesPendingPermission != null && !mFilesPendingPermission.isEmpty()) {
-                        showDeleteConfirmationDialog(mFilesPendingPermission);
+                        showDeleteConfirmationDialog(mFilesPendingPermission, mFilesPendingPermission.size());
                     }
                 }
             } else {
