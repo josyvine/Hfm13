@@ -45,7 +45,7 @@
 
 
     <!-- Declare that the app uses these sensors. 'required="false"' means the app can run
-	on devices without them, though the hide feature might be limited. -->
+        on devices without them, though the hide feature might be limited. -->
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.proximity" android:required="false" />
@@ -266,13 +266,20 @@
             android:label="HFM Messenger Drop"
             android:theme="@style/AppTheme.Light"
             android:exported="false"/>
-            
+
         <!-- THIS IS THE FIX: Declare the new DropProgressActivity -->
         <activity
             android:name=".DropProgressActivity"
             android:label="HFM Drop Progress"
             android:theme="@style/AppTheme.Light"
             android:exported="false"/>
+
+        <!-- NEW: LIVE DELETION MONITOR POPUP -->
+        <activity
+            android:name=".DeletionMonitorActivity"
+            android:label="Deletion Monitor"
+            android:theme="@android:style/Theme.DeviceDefault.Dialog"
+            android:exported="false" />
 
 
         <provider
