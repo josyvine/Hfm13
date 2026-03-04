@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.provider.MediaStore;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -18,7 +19,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-// --- UPDATE 1: Add necessary imports for Manifest and ContextCompat ---
 import android.Manifest;
 
 public class DeleteService extends IntentService {
@@ -51,7 +51,15 @@ public class DeleteService extends IntentService {
             return;
         }
 
-        ArrayList<String> filePathsToDelete = intent.getStringArrayListExtra(EXTRA_FILES_TO_DELETE);
+        // --- FIX: PULL FROM BRIDGE to avoid TransactionTooLargeException ---
+        // We also check the intent extra just in case it was called normally with a small list
+        ArrayList<String> filePathsToDelete = FileBridge.mFilesToDelete;
+        if (filePathsToDelete != null && !filePathsToDelete.isEmpty()) {
+            FileBridge.mFilesToDelete = new ArrayList<>(); // Clear bridge memory immediately
+        } else {
+            filePathsToDelete = intent.getStringArrayListExtra(EXTRA_FILES_TO_DELETE);
+        }
+
         // Enhancement 4: Retrieve chosen batch size
         int batchSize = intent.getIntExtra("batch_size", 1);
 
@@ -80,21 +88,31 @@ public class DeleteService extends IntentService {
         for (int i = 0; i < totalFiles; i += batchSize) {
             int end = Math.min(i + batchSize, totalFiles);
             List<String> batchPaths = filePathsToDelete.subList(i, end);
-            List<File> batchFiles = new ArrayList<>();
 
             for (String path : batchPaths) {
-                batchFiles.add(new File(path));
+                File file = new File(path);
+                
+                // --- FIX: Use StorageUtils for reliable physical SD Card deletion ---
+                if (StorageUtils.deleteFile(this, file)) {
+                    deletedCount++;
+                    
+                    // Immediately clear the ghost entry from the Android MediaStore Database
+                    try {
+                        getContentResolver().delete(
+                            MediaStore.Files.getContentUri("external"), 
+                            MediaStore.Files.FileColumns.DATA + "=?", 
+                            new String[]{path}
+                        );
+                    } catch (Exception ignored) {}
+                } else {
+                    Log.e(TAG, "Failed to delete file: " + path);
+                }
             }
-
-            // UPDATE 3: Call optimized bulk delete and accurately sum the results
-            // This relies on FileUtils to return the max(db_delete, physical_delete) count
-            // Since permissions are now handled in the Activity for Android 11+, this runs reliably.
-            deletedCount += FileUtils.deleteFileBatch(this, batchFiles);
 
             // --- UPDATE 4: Check permission again before updating the notification ---
             if (canShowNotification) {
-                String progressText = "Deleted " + Math.min(i + batchSize, totalFiles) + " of " + totalFiles + "...";
-                notificationManager.notify(NOTIFICATION_ID, createNotification(progressText, Math.min(i + batchSize, totalFiles), totalFiles));
+                String progressText = "Deleted " + end + " of " + totalFiles + "...";
+                notificationManager.notify(NOTIFICATION_ID, createNotification(progressText, end, totalFiles));
             }
         }
 
