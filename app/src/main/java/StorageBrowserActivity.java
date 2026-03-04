@@ -726,8 +726,8 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                     return;
                 }
                 
-                final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
-                final int[] batchValues = {1, 5, 10, 20, 30};
+                final String[] batchOptions = {"50", "100", "500", "1000", "Max (All at once)"};
+                final int[] batchValues = {50, 100, 500, 1000, 100000};
 
                 new AlertDialog.Builder(StorageBrowserActivity.this)
                     .setTitle("Select Deletion Speed")
@@ -796,8 +796,8 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                         .setPositiveButton("Delete All", new DialogInterface.OnClickListener() {
                                 @Override
                                 public void onClick(DialogInterface dialog, int which) {
-                    final String[] batchOptions = {"1 (Single)", "5 at a time", "10 at a time", "20 at a time", "30 at a time"};
-                    final int[] batchValues = {1, 5, 10, 20, 30};
+                    final String[] batchOptions = {"50", "100", "500", "1000", "Max (All at once)"};
+                    final int[] batchValues = {50, 100, 500, 1000, 100000};
 
                     new AlertDialog.Builder(StorageBrowserActivity.this)
                         .setTitle("Select Deletion Speed")
@@ -1145,6 +1145,7 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                 }
             }
         }
+        Collections.sort(siblingFiles);
         return siblingFiles;
     }
 
@@ -1417,6 +1418,30 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                 }
                 masterList.removeAll(itemsToRemove);
                 rebuildDisplayList();
+            }
+        }
+
+        private boolean copyFile(File source, File destination) {
+            InputStream in = null;
+            OutputStream out = null;
+            try {
+                in = new FileInputStream(source);
+                out = new FileOutputStream(destination);
+                byte[] buf = new byte[131072]; 
+                int len;
+                while ((len = in.read(buf)) > 0) {
+                    out.write(buf, 0, len);
+                }
+                return true;
+            } catch (IOException e) {
+                return StorageUtils.copyFile(context, source, destination);
+            } finally {
+                try {
+                    if (in != null) in.close();
+                    if (out != null) out.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
