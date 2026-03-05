@@ -95,8 +95,6 @@ public class DeleteService extends Service {
         startActivity(monitorIntent);
 
         // REQUIREMENT: PARALLEL CHUNKING (IDM STYLE)
-        // This loop splits the 100 files into chunks (e.g., 4 chunks of 25)
-        // and starts each chunk as a completely separate notification and thread.
         for (int i = 0; i < fullList.size(); i += batchSize) {
             int end = Math.min(i + batchSize, fullList.size());
             final List<String> chunk = new ArrayList<>(fullList.subList(i, end));
@@ -129,38 +127,54 @@ public class DeleteService extends Service {
         sendLog("Job #" + jobId + ": Initialising parallel batch of " + totalInBatch + " files.");
         notificationManager.notify(jobId, createNotification("Deleting Batch #" + jobId, "Starting...", 0, totalInBatch, true));
 
-        for (int i = 0; i < totalInBatch; i++) {
-            String path = filePaths.get(i);
-            File file = new File(path);
-            String fileName = file.getName();
+        // INCREASE INTERNAL ENGINE: Process in sub-groups of 3 instead of 1-by-1
+        for (int i = 0; i < totalInBatch; i += 3) {
+            int groupEnd = Math.min(i + 3, totalInBatch);
+            List<String> subGroup = filePaths.subList(i, groupEnd);
             
-            boolean deleted = false;
+            // 1. PHYSICAL DELETE (Java path with SAF fallback)
+            for (String path : subGroup) {
+                File file = new File(path);
+                String fileName = file.getName();
+                boolean deleted = false;
+                
+                sendLog("Initialising: " + fileName);
 
-            // 1. FAST DELETE (Java Path)
-            if (file.exists()) {
-                deleted = file.delete();
-                if (deleted) sendLog("[Job " + jobId + "] [FAST] Java Deleted: " + fileName);
+                if (file.exists()) {
+                    deleted = file.delete();
+                    if (deleted) sendLog("[Job " + jobId + "] [FAST] Java Deleted: " + fileName);
+                }
+
+                if (!deleted && file.exists()) {
+                    sendLog("[Job " + jobId + "] [WAIT] SAF request for: " + fileName);
+                    deleted = StorageUtils.deleteFile(DeleteService.this, file);
+                    if (deleted) sendLog("[Job " + jobId + "] [SLOW] SAF Deleted: " + fileName);
+                }
+                
+                if (deleted || !file.exists()) {
+                    deletedCount++;
+                }
             }
 
-            // 2. SLOW DELETE FALLBACK (SAF Path)
-            if (!deleted && file.exists()) {
-                sendLog("[Job " + jobId + "] [WAIT] SAF request for: " + fileName);
-                deleted = StorageUtils.deleteFile(DeleteService.this, file);
-                if (deleted) sendLog("[Job " + jobId + "] [SLOW] SAF Deleted: " + fileName);
-            }
-
-            // 3. CLEAN DATABASE
-            if (deleted || !file.exists()) {
-                deletedCount++;
-                try {
-                    resolver.delete(MediaStore.Files.getContentUri("external"), 
-                        MediaStore.Files.FileColumns.DATA + "=?", new String[]{path});
-                } catch (Exception ignored) {}
+            // 2. DATABASE BATCH WIPE (SQL "IN" clause for the sub-group)
+            try {
+                StringBuilder where = new StringBuilder(MediaStore.Files.FileColumns.DATA + " IN (");
+                String[] args = new String[subGroup.size()];
+                for (int j = 0; j < subGroup.size(); j++) {
+                    where.append("?");
+                    if (j < subGroup.size() - 1) where.append(",");
+                    args[j] = subGroup.get(j);
+                }
+                where.append(")");
+                
+                resolver.delete(MediaStore.Files.getContentUri("external"), where.toString(), args);
+            } catch (Exception e) {
+                sendLog("[Job " + jobId + "] DB Error: " + e.getMessage());
             }
 
             // Update this specific notification bar
-            String progressText = "Processed " + (i + 1) + " of " + totalInBatch;
-            notificationManager.notify(jobId, createNotification("Deleting Batch #" + jobId, progressText, i + 1, totalInBatch, true));
+            String progressText = "Processed " + groupEnd + " of " + totalInBatch;
+            notificationManager.notify(jobId, createNotification("Deleting Batch #" + jobId, progressText, groupEnd, totalInBatch, true));
         }
 
         sendLog("Job #" + jobId + " complete.");
