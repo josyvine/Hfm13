@@ -514,10 +514,8 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                                                         updateFooterUI();
                                                         break;
                         case 4: // Hide
-                            // Optimized: Just send the folder to Ritual Task, don't scan subfiles here
-                            Intent hideIntent = new Intent(StorageBrowserActivity.this, FileHiderActivity.class);
-                            hideIntent.putExtra(RitualRecordTapsActivity.EXTRA_FILES_TO_HIDE, (Serializable) folderList);
-                            startActivity(hideIntent);
+                            // RESTORED MISSING LOGIC: We MUST expand sub-files for the Hider Activity to process them properly.
+                            new GatherFilesForHidingTask().execute(folder);
                             break;
                                                 case 5: // Move to Recycle Bin
                             AlertDialog.Builder binBuilder = new AlertDialog.Builder(StorageBrowserActivity.this);
@@ -608,9 +606,10 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
         final GeminiAnalyzer analyzer = new GeminiAnalyzer(this, aiDetailsText, progressBar, copyButton);
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-        boolean isConnected = activeNetwork != null && isConnectedOrConnecting();
+        
+        // FIX: Re-attached the missing "activeNetwork." to resolve Build Error
+        boolean isConnected = activeNetwork != null && activeNetwork.isConnectedOrConnecting();
         moreButton.setEnabled(ApiKeyManager.getApiKey(this) != null && isConnected);
-
 
         moreButton.setOnClickListener(new View.OnClickListener() {
                                 @Override
@@ -704,27 +703,24 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
     }
 
     private void initiateFolderDeletionProcess(final File folder) {
-        // Optimized: Don't scan files. Just send folder path directly to Service.
-        ArrayList<String> folderPathList = new ArrayList<>();
+        // Optimized: Don't scan subfiles. Just send folder root path directly to Service.
+        final ArrayList<String> folderPathList = new ArrayList<>();
         folderPathList.add(folder.getAbsolutePath());
 
-        final String[] batchOptions = {"50", "100", "500", "1000", "Max (All at once)"};
-        final int[] batchValues = {50, 100, 500, 1000, 100000};
-
+        // Requirement 1: Increased Batch Options
         new AlertDialog.Builder(StorageBrowserActivity.this)
             .setTitle("Confirm Folder Wipe")
             .setMessage("Delete '" + folder.getName() + "' and all contents permanently?")
             .setPositiveButton("Delete", new DialogInterface.OnClickListener() {
                 @Override
-                public void onClick(DialogInterface dialogInterface, int index) {
-                    // Send to service with default batch values, though folder wipe is 1-call.
+                public void onClick(DialogInterface dialogInterface, int which) {
+                    // Send to service. Folder Turbo Wipe ignores batch size, but we pass it for logic consistency.
                     performDeletion(folderPathList, 50);
                 }
             })
             .setNegativeButton("Cancel", null)
             .show();
     }
-
 
     private void initiateDeletionProcess() {
         final List<File> initiallySelectedFiles = getSelectedFiles();
@@ -756,26 +752,72 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
         }
     }
 
-    private void showDeleteConfirmationDialog(final List<File> filesToConfirm) {
-        // Fast logic: Separate files and folders. Don't expand folders into subfile lists.
-        ArrayList<String> pathsToDelete = new ArrayList<>();
-        int foldersCount = 0;
-        int filesCount = 0;
+    // RESTORED MISSING LOGIC: We need findSiblingFiles to prevent abandoning burst-shots and raw sidecars
+    private List<File> findSiblingFiles(File originalFile) {
+        List<File> siblings = new ArrayList<>();
+        siblings.add(originalFile);
+        String fileName = originalFile.getName();
+        Matcher matcher = FILE_BASE_NAME_PATTERN.matcher(fileName);
+        if (matcher.find()) {
+            String baseName = matcher.group(0);
+            File parentDir = originalFile.getParentFile();
+            if (parentDir != null && parentDir.isDirectory()) {
+                File[] filesInDir = parentDir.listFiles();
+                if (filesInDir != null) {
+                    for (File potentialSibling : filesInDir) {
+                        if (potentialSibling.isFile() && potentialSibling.getName().startsWith(baseName) && !potentialSibling.getAbsolutePath().equals(originalFile.getAbsolutePath())) {
+                            siblings.add(potentialSibling);
+                        }
+                    }
+                }
+            }
+        }
+        return siblings;
+    }
 
-        for (File f : filesToConfirm) {
-            pathsToDelete.add(f.getAbsolutePath());
-            if (f.isDirectory()) foldersCount++;
-            else filesCount++;
+    private void showDeleteConfirmationDialog(final List<File> filesToConfirm) {
+        final Set<File> masterDeleteSet = new HashSet<>();
+        int foldersCount = 0;
+        
+        for (File selectedFile : filesToConfirm) {
+            if (selectedFile.isDirectory()) {
+                // Fast logic: Process root paths. Don't expand folders into subfile lists here.
+                masterDeleteSet.add(selectedFile);
+                foldersCount++;
+            } else {
+                // Keep the vital sibling finder active for individual files
+                masterDeleteSet.addAll(findSiblingFiles(selectedFile));
+            }
         }
 
-        String dialogMessage = "Permanently delete " + filesCount + " file(s) and " + foldersCount + " folder(s)?";
+        final List<File> filesToDelete = new ArrayList<>(masterDeleteSet);
+        final ArrayList<String> pathsToDelete = new ArrayList<>();
+        int filesCount = 0;
+
+        for (File f : filesToDelete) {
+            pathsToDelete.add(f.getAbsolutePath());
+            if (!f.isDirectory()) {
+                filesCount++;
+            }
+        }
+
+        String dialogMessage;
+        if (filesToDelete.size() > filesToConfirm.size() && foldersCount == 0) {
+            int siblingCount = filesToDelete.size() - filesToConfirm.size();
+            dialogMessage = "You selected <b>" + filesToConfirm.size() + "</b> file(s), but we found <b>" + siblingCount
+                                + "</b> other related version(s).<br/><br/>Are you sure you want to permanently delete all <b>"
+                                + filesToDelete.size() + "</b> related file(s)? This action cannot be undone.";
+        } else {
+            dialogMessage = "Are you sure you want to permanently delete " + filesCount + " file(s) and " + foldersCount + " folder(s)? This action cannot be undone.";
+        }
 
         new AlertDialog.Builder(this)
                         .setTitle("Confirm Deletion")
-                        .setMessage(dialogMessage)
+                        .setMessage(Html.fromHtml(dialogMessage))
                         .setPositiveButton("Delete All", new DialogInterface.OnClickListener() {
                                 @Override
                                 public void onClick(DialogInterface dialog, int which) {
+                    // Requirement 1: Increased Batch Options
                     final String[] batchOptions = {"50", "100", "500", "1000", "Max (All at once)"};
                     final int[] batchValues = {50, 100, 500, 1000, 100000};
 
@@ -797,7 +839,7 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
                     binBuilder.setItems(new CharSequence[]{"Phone Recycle Bin", "SD Card Recycle Bin"}, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int whichBin) {
-                            new MoveToRecycleTask(filesToConfirm, whichBin == 1).execute();
+                            new MoveToRecycleTask(filesToDelete, whichBin == 1).execute();
                         }
                     });
                     binBuilder.show();
@@ -812,12 +854,61 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
         operationProgressBar.setIndeterminate(true);
         operationProgressText.setText("Starting deletion...");
 
-        // Load into Bridge for massive lists
+        // Load into Bridge to handle massive lists without Intent size limits
         FileBridge.mFilesToDelete = new ArrayList<>(filePathsToDelete);
 
-        Intent intent = new Intent(this, DeleteService.class);
-        intent.putExtra("batch_size", batchSize);
-        ContextCompat.startForegroundService(this, intent);
+        // FIX: Cleaned up intent declaration to resolve the variable build error
+        Intent deleteIntent = new Intent(this, DeleteService.class);
+        deleteIntent.putStringArrayListExtra(DeleteService.EXTRA_FILES_TO_DELETE, new ArrayList<>(filePathsToDelete)); // Added fallback just in case
+        deleteIntent.putExtra("batch_size", batchSize);
+        ContextCompat.startForegroundService(this, deleteIntent);
+    }
+
+    // RESTORED MISSING LOGIC: Essential for Folder Hiding feature extraction
+    private ArrayList<File> getAllFilesRecursive(File directory) {
+        ArrayList<File> fileList = new ArrayList<>();
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory()) {
+                    fileList.addAll(getAllFilesRecursive(file));
+                } else {
+                    fileList.add(file);
+                }
+            }
+        }
+        return fileList;
+    }
+
+    // RESTORED MISSING LOGIC: Restored AsyncTask wrapper for Folder Hiding to prevent Activity crash
+    private class GatherFilesForHidingTask extends AsyncTask<File, Void, ArrayList<File>> {
+        AlertDialog progressDialog;
+
+        @Override
+        protected void onPreExecute() {
+            AlertDialog.Builder builder = new AlertDialog.Builder(StorageBrowserActivity.this);
+            builder.setView(R.layout.dialog_progress_simple);
+            builder.setCancelable(false);
+            progressDialog = builder.create();
+            progressDialog.show();
+        }
+
+        @Override
+        protected ArrayList<File> doInBackground(File... dirs) {
+            return getAllFilesRecursive(dirs[0]);
+        }
+
+        @Override
+        protected void onPostExecute(ArrayList<File> files) {
+            progressDialog.dismiss();
+            if (files.isEmpty()) {
+                Toast.makeText(StorageBrowserActivity.this, "Folder is empty, nothing to hide.", Toast.LENGTH_SHORT).show();
+            } else {
+                Intent intent = new Intent(StorageBrowserActivity.this, FileHiderActivity.class);
+                intent.putExtra(RitualRecordTapsActivity.EXTRA_FILES_TO_HIDE, files);
+                startActivity(intent);
+            }
+        }
     }
 
     private class ScanFilesTask extends AsyncTask<File, Void, List<File>> {
@@ -1166,7 +1257,7 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
         serviceIntent.putExtra(FileOperationService.EXTRA_SOURCE_FILES, (Serializable) filesToOperate);
         serviceIntent.putExtra(FileOperationService.EXTRA_DESTINATION_DIR, destination);
         serviceIntent.putExtra(FileOperationService.EXTRA_OPERATION_TYPE, operation);
-        ContextCompat.startForegroundService(this, intent);
+        ContextCompat.startForegroundService(this, serviceIntent);
 
         com.hfm.app.ClipboardManager.getInstance().clear();
         updateFooterUI();
@@ -1184,7 +1275,6 @@ public class StorageBrowserActivity extends Activity implements StorageBrowserAd
             promptForSdCardPermission();
             return;
         }
-
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         LayoutInflater inflater = this.getLayoutInflater();
