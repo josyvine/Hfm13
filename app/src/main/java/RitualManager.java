@@ -3,6 +3,7 @@ package com.hfm.app;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.location.Location;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.provider.MediaStore;
@@ -209,7 +210,7 @@ public class RitualManager {
                 hiddenDir.mkdir();
             }
 
-            ContentResolver resolver = context.getContentResolver();
+            // Removed ContentResolver here to prevent "Delete?" system popup
 
             for (int i = 0; i < filesToHide.size(); i++) {
                 File originalFile = filesToHide.get(i);
@@ -266,20 +267,8 @@ public class RitualManager {
                         tempZipFile.delete();
                     }
 
-                    // --- STEALTH REMOVAL ---
-                    try {
-                        Uri filesUri = MediaStore.Files.getContentUri("external");
-                        if (isFolder) {
-                            // Recursively remove folder content from DB
-                            resolver.delete(filesUri, MediaStore.MediaColumns.DATA + " LIKE ?", new String[]{path + "%"});
-                        } else {
-                            resolver.delete(filesUri, MediaStore.MediaColumns.DATA + "=?", new String[]{path});
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Stealth DB removal failed", e);
-                    }
-
-                    // Physical deletion (Recursive for folders)
+                    // --- STEALTH REMOVAL (Fix for System Popup) ---
+                    // 1. Physically delete the file/folder first.
                     if (isFolder) {
                         StorageUtils.deleteRecursive(context, originalFile);
                     } else {
@@ -287,6 +276,10 @@ public class RitualManager {
                             StorageUtils.deleteFile(context, originalFile);
                         }
                     }
+
+                    // 2. Trigger a silent MediaScan on the DELETED path.
+                    // When MediaScanner scans a path that doesn't exist, it removes it from the DB silently.
+                    MediaScannerConnection.scanFile(context, new String[]{path}, null, null);
 
                 } catch (Exception e) {
                     Log.e(TAG, "Encryption failed for " + originalFile.getName(), e);
@@ -356,7 +349,7 @@ public class RitualManager {
             for (int i = 0; i < ritual.hiddenFiles.size(); i++) {
                 HiddenFile hiddenFile = ritual.hiddenFiles.get(i);
                 File encryptedFile = new File(hiddenDir, hiddenFile.encryptedFileName);
-                File destinationPath = new File(hiddenFile.originalPath);
+                final File destinationPath = new File(hiddenFile.originalPath);
 
                 publishProgress("Decrypting: " + destinationPath.getName() + " (" + (i + 1) + "/" + ritual.hiddenFiles.size() + ")");
 
@@ -394,6 +387,19 @@ public class RitualManager {
                         // If file, move copy safely using StorageUtils (Handles SD Card permissions)
                         copyFileSafely(tempDecryptedFile, destinationPath);
                     }
+
+                    // --- FIX FOR SLOW FILE REAPPEARANCE ---
+                    // Force the MediaScanner to index the restored path immediately.
+                    MediaScannerConnection.scanFile(context, 
+                        new String[]{ destinationPath.getAbsolutePath() }, 
+                        null, 
+                        new MediaScannerConnection.OnScanCompletedListener() {
+                            @Override
+                            public void onScanCompleted(String path, Uri uri) {
+                                Log.d(TAG, "Scanned restored file: " + path);
+                            }
+                        }
+                    );
 
                     // Cleanup temp file
                     tempDecryptedFile.delete();
