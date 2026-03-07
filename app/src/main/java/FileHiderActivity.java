@@ -63,14 +63,15 @@ public class FileHiderActivity extends Activity {
         setupListeners();
         setupRecyclerView();
 
-        // --- NEW LOGIC: Check for pre-selected files from Intent ---
+        // --- NEW LOGIC: Check for pre-selected files from Intent (e.g., from StorageBrowserActivity) ---
         Serializable fileListSerializable = getIntent().getSerializableExtra(RitualRecordTapsActivity.EXTRA_FILES_TO_HIDE);
         if (fileListSerializable instanceof List) {
             List<File> preSelectedFiles = (List<File>) fileListSerializable;
             if (!preSelectedFiles.isEmpty()) {
-                // If we received a list, display it directly and skip the full scan.
+                // If we received a list, display it directly.
+                // This list can now contain Folder objects, which the Adapter handles correctly.
                 handlePreSelectedFiles(preSelectedFiles);
-                return; // Stop further execution in onCreate
+                return; // Stop further execution (skip the full device scan)
             }
         }
 
@@ -91,14 +92,16 @@ public class FileHiderActivity extends Activity {
         resultsView = findViewById(R.id.results_view_hider);
     }
 
-    // --- NEW METHOD to handle incoming file list ---
+    // --- NEW METHOD to handle incoming file/folder list ---
     private void handlePreSelectedFiles(List<File> files) {
         // We don't need the loading view for this mode
         loadingView.setVisibility(View.GONE);
         resultsView.setVisibility(View.VISIBLE);
-        scanStatusText.setText(files.size() + " file(s) pre-selected for hiding.");
-        filterButton.setVisibility(View.GONE); // Hide filter button as we are showing a fixed list
-        searchInput.setVisibility(View.GONE); // Hide search as well
+        scanStatusText.setText(files.size() + " item(s) selected for hiding.");
+        
+        // Hide filter/search controls as we are showing a fixed selection list
+        filterButton.setVisibility(View.GONE);
+        searchInput.setVisibility(View.GONE);
 
         masterFileList.clear();
         masterFileList.addAll(files);
@@ -107,12 +110,12 @@ public class FileHiderActivity extends Activity {
         adapter = new FileHiderAdapter(this, masterFileList, fileItemClickListener);
         hiderResultsGrid.setAdapter(adapter);
 
-        // Automatically select all the files that were passed in
+        // Automatically select all the files/folders that were passed in
         adapter.selectAll(true);
         isAllSelected = true;
         selectAllButton.setText("Deselect All");
+        updateSelectionCount();
     }
-
 
     private void setupRecyclerView() {
         this.fileItemClickListener = new FileHiderAdapter.OnItemClickListener() {
@@ -137,53 +140,53 @@ public class FileHiderActivity extends Activity {
 
     private void setupListeners() {
         closeButton.setOnClickListener(new View.OnClickListener() {
-				@Override
-				public void onClick(View v) {
-					finish();
-				}
-			});
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
 
         selectAllButton.setOnClickListener(new View.OnClickListener() {
-				@Override
-				public void onClick(View v) {
-					isAllSelected = !isAllSelected;
-					adapter.selectAll(isAllSelected);
-					if (isAllSelected) {
-						selectAllButton.setText("Deselect All");
-					} else {
-						selectAllButton.setText("Select All");
-					}
-				}
-			});
+            @Override
+            public void onClick(View v) {
+                isAllSelected = !isAllSelected;
+                adapter.selectAll(isAllSelected);
+                if (isAllSelected) {
+                    selectAllButton.setText("Deselect All");
+                } else {
+                    selectAllButton.setText("Select All");
+                }
+            }
+        });
 
         hideButton.setOnClickListener(new View.OnClickListener() {
-				@Override
-				public void onClick(View v) {
-					startHidingProcess();
-				}
-			});
+            @Override
+            public void onClick(View v) {
+                startHidingProcess();
+            }
+        });
 
         filterButton.setOnClickListener(new View.OnClickListener() {
-				@Override
-				public void onClick(View v) {
-					showFilterMenu(v);
-				}
-			});
+            @Override
+            public void onClick(View v) {
+                showFilterMenu(v);
+            }
+        });
 
         searchInput.addTextChangedListener(new TextWatcher() {
-				@Override
-				public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
-				@Override
-				public void onTextChanged(CharSequence s, int start, int before, int count) {
-					if (adapter != null) {
-						adapter.getFilter().filter(s);
-					}
-				}
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (adapter != null) {
+                    adapter.getFilter().filter(s);
+                }
+            }
 
-				@Override
-				public void afterTextChanged(Editable s) {}
-			});
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
     }
 
     private void updateSelectionCount() {
@@ -193,7 +196,7 @@ public class FileHiderActivity extends Activity {
                 count++;
             }
         }
-        selectionCountText.setText(count + " files selected");
+        selectionCountText.setText(count + " items selected");
 
         int visibleItemCount = adapter.getItemCount();
         int visibleSelectedItemCount = 0;
@@ -216,20 +219,20 @@ public class FileHiderActivity extends Activity {
         PopupMenu popup = new PopupMenu(this, v);
         popup.getMenuInflater().inflate(R.menu.filter_menu, popup.getMenu());
         popup.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
-				@Override
-				public boolean onMenuItemClick(MenuItem item) {
-					int itemId = item.getItemId();
-					if (itemId == R.id.filter_all) currentFilterType = "all";
-					else if (itemId == R.id.filter_images) currentFilterType = "images";
-					else if (itemId == R.id.filter_videos) currentFilterType = "videos";
-					else if (itemId == R.id.filter_documents) currentFilterType = "documents";
-					else if (itemId == R.id.filter_archives) currentFilterType = "archives";
-					else if (itemId == R.id.filter_other) currentFilterType = "other";
+            @Override
+            public boolean onMenuItemClick(MenuItem item) {
+                int itemId = item.getItemId();
+                if (itemId == R.id.filter_all) currentFilterType = "all";
+                else if (itemId == R.id.filter_images) currentFilterType = "images";
+                else if (itemId == R.id.filter_videos) currentFilterType = "videos";
+                else if (itemId == R.id.filter_documents) currentFilterType = "documents";
+                else if (itemId == R.id.filter_archives) currentFilterType = "archives";
+                else if (itemId == R.id.filter_other) currentFilterType = "other";
 
-					filterMasterList();
-					return true;
-				}
-			});
+                filterMasterList();
+                return true;
+            }
+        });
         popup.show();
     }
 
@@ -289,7 +292,7 @@ public class FileHiderActivity extends Activity {
         }
 
         if (filesToHide.isEmpty()) {
-            Toast.makeText(this, "No files selected to hide.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No items selected to hide.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -305,30 +308,31 @@ public class FileHiderActivity extends Activity {
         final Button newRitualButton = dialogView.findViewById(R.id.button_new_ritual);
         final Button existingRitualButton = dialogView.findViewById(R.id.button_existing_ritual);
 
-        message.setText("You have selected " + filesToHide.size() + " file(s). How would you like to secure them?");
+        message.setText("You have selected " + filesToHide.size() + " item(s). How would you like to secure them?");
 
         final AlertDialog choiceDialog = builder.create();
 
         newRitualButton.setOnClickListener(new View.OnClickListener() {
-				@Override
-				public void onClick(View v) {
-					Intent intent = new Intent(FileHiderActivity.this, RitualRecordTapsActivity.class);
-					intent.putExtra(RitualRecordTapsActivity.EXTRA_FILES_TO_HIDE, (Serializable) filesToHide);
-					startActivity(intent);
-					choiceDialog.dismiss();
-					finish();
-				}
-			});
+            @Override
+            public void onClick(View v) {
+                // Pass the files directly. If they are folders, the RitualManager handles zipping.
+                Intent intent = new Intent(FileHiderActivity.this, RitualRecordTapsActivity.class);
+                intent.putExtra(RitualRecordTapsActivity.EXTRA_FILES_TO_HIDE, (Serializable) filesToHide);
+                startActivity(intent);
+                choiceDialog.dismiss();
+                finish();
+            }
+        });
 
         if (existingRituals != null && !existingRituals.isEmpty()) {
             existingRitualButton.setEnabled(true);
             existingRitualButton.setOnClickListener(new View.OnClickListener() {
-					@Override
-					public void onClick(View v) {
-						choiceDialog.dismiss();
-						showExistingRitualsDialog(existingRituals, filesToHide, ritualManager);
-					}
-				});
+                @Override
+                public void onClick(View v) {
+                    choiceDialog.dismiss();
+                    showExistingRitualsDialog(existingRituals, filesToHide, ritualManager);
+                }
+            });
         } else {
             existingRitualButton.setEnabled(false);
             existingRitualButton.setAlpha(0.5f);
@@ -346,16 +350,17 @@ public class FileHiderActivity extends Activity {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("Add to which Ritual?");
         builder.setItems(ritualChoices, new DialogInterface.OnClickListener() {
-				@Override
-				public void onClick(DialogInterface dialog, int which) {
-					ritualManager.addFilesToRitual(FileHiderActivity.this, which, filesToHide);
-					dialog.dismiss();
-					finish();
-				}
-			});
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                ritualManager.addFilesToRitual(FileHiderActivity.this, which, filesToHide);
+                dialog.dismiss();
+                finish();
+            }
+        });
         builder.show();
     }
 
+    // --- AsyncTask for scanning files (Fallback mode only) ---
     private class ScanFilesTask extends AsyncTask<File, String, List<File>> {
         @Override
         protected void onPreExecute() {
@@ -371,11 +376,11 @@ public class FileHiderActivity extends Activity {
                 scanDirectory(root, foundFiles);
             }
             Collections.sort(foundFiles, new Comparator<File>() {
-					@Override
-					public int compare(File f1, File f2) {
-						return Long.compare(f2.lastModified(), f1.lastModified());
-					}
-				});
+                @Override
+                public int compare(File f1, File f2) {
+                    return Long.compare(f2.lastModified(), f1.lastModified());
+                }
+            });
             return foundFiles;
         }
 
